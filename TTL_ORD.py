@@ -5,7 +5,9 @@ import base64
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from email.mime.text import MIMEText
+import time
 from google.cloud import bigquery
+from google.cloud import functions
 
 # Set up BigQuery client
 client = bigquery.Client()
@@ -53,6 +55,25 @@ def get_ornd_auth():
     }
     return params
 
+def generate_passcode( start_date, end_date, name, company):
+    today = int(time.time())
+    url = "https://euapi.ttlock.com/v3/keyboardPwd/get"
+    headers = {
+        "ContentType": "application/x-www-form-urlencoded",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    payload = {
+        "clientId": "254709733a6c4331995b4771e0bce143",
+        "accessToken": "c0cb52a1308dc477a43b02c77fbc663d",
+        "lockId": "6758026",
+        "keyboardPwdType": 3,
+        "keyboardPwdName": f"{name} | {company}",
+        "startDate": start_date,
+        "endDate": end_date,
+        "date": today
+    }
+    response = requests.post(url, headers=headers, data=payload)
+    return response.json()
 
 
 def get_email_and_name_by_id(member_id):
@@ -64,21 +85,27 @@ def get_email_and_name_by_id(member_id):
     name = response_json["name"]
     return {"email": email, "name": name}
 
+
+
+@functions.http(method='POST', path='/process-webhook')
 def process_webhook(request):
   # Extract webhook data from request
   data = request.get_json()
 
-  # Retrieve passcode from TTlock API
-  lock_id = data['lock_id']
-  passcode_response = requests.get(f'https://api.ttlock.com/v3/passcodes/{lock_id}')
-  passcode_response_data = passcode_response.json()
-  passcode = passcode_response_data['passcode']
+  # Generate passcode and retrieve response data
+  start_date = data['start_date']
+  end_date = data['end_date']
+  name = data['name']
+  company = data['company']
+  response_data = generate_passcode( start_date, end_date, name, company)
 
-  # Add passcode to webhook data
-  data['passcode'] = passcode
+    # Add response data to webhook data
+  passcode = response_data['passcode']
+  data['passcode'] = response_data['passcode']
+  data['keyboardPwdId'] = response_data['keyboardPwdId']
 
   # Insert data into BigQuery table
-  table_id = "my-project.my_dataset.my_table"
+  table_id = "splendid-sector-327407.SG1.SG1_TTL_Cloud"
   table = client.get_table(table_id)
   rows_to_insert = [data]
   errors = client.insert_rows(table, rows_to_insert)
